@@ -1,362 +1,163 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
-import { useAuth, UserButton, SignInButton } from "@clerk/nextjs";
-import { useRouter } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
 
 type AnalysisResult = {
-    decision: string;
-    structured_report: string;
-    market_report: string;
-    news_report: string;
-    fundamentals_report: string;
-    sentiment_report: string;
+  decision: string;
+  structured_report: string;
+  market_report: string;
+  news_report: string;
+  fundamentals_report: string;
+  sentiment_report: string;
 };
 
 type TaskStatus = {
-    status: "pending" | "running" | "done" | "error";
-    result?: AnalysisResult;
-    error?: string;
+  status: "pending" | "running" | "done" | "error";
+  result: AnalysisResult | string | null;
 };
 
-type UserUsage = {
-    usageCount: number;
-    freeLimit: number;
-    isSubscribed: boolean;
-    canAnalyze: boolean;
+const DECISION_CONFIG = {
+  BUY:  { color: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-200" },
+  SELL: { color: "text-red-600",     bg: "bg-red-50",     border: "border-red-200" },
+  HOLD: { color: "text-amber-600",   bg: "bg-amber-50",   border: "border-amber-200" },
 };
 
-const TABS = [
-  { key: "structured_report", label: "Full Report" },
-  { key: "market_report", label: "Market" },
-  { key: "news_report", label: "News" },
-  { key: "fundamentals_report", label: "Fundamentals" },
-  { key: "sentiment_report", label: "Sentiment" },
-  ];
+const SECTIONS = [
+  { key: "structured_report",   label: "Research Note",      icon: "📋" },
+  { key: "market_report",       label: "Technical Analysis", icon: "📈" },
+  { key: "fundamentals_report", label: "Fundamentals",       icon: "🏦" },
+  { key: "news_report",         label: "News & Macro",       icon: "🌐" },
+  { key: "sentiment_report",    label: "Sentiment",          icon: "💬" },
+];
 
 export default function Home() {
-    const { isSignedIn, userId } = useAuth();
-    const router = useRouter();
-
   const [ticker, setTicker] = useState("");
-    const [date, setDate] = useState(() => new Date().toISOString().split("T")[0]);
-    const [taskId, setTaskId] = useState<string | null>(null);
-    const [status, setStatus] = useState<TaskStatus | null>(null);
-    const [activeTab, setActiveTab] = useState("structured_report");
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [userUsage, setUserUsage] = useState<UserUsage | null>(null);
-    const [usageLoading, setUsageLoading] = useState(false);
+  const [date, setDate] = useState(new Date().toISOString().split("T")[0]);
+  const [taskStatus, setTaskStatus] = useState<TaskStatus | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState("structured_report");
+  const [analysisTime, setAnalysisTime] = useState<number | null>(null);
 
-  // Fetch user usage when signed in
-  const fetchUsage = useCallback(async () => {
-        if (!isSignedIn) return;
-        setUsageLoading(true);
-        try {
-                const res = await fetch("/api/user/usage");
-                if (res.ok) {
-                          const data = await res.json();
-                          setUserUsage(data);
-                }
-        } catch (err) {
-                console.error("Failed to fetch usage:", err);
-        } finally {
-                setUsageLoading(false);
-        }
-  }, [isSignedIn]);
+  const startAnalysis = async () => {
+    if (!ticker) return;
+    setLoading(true);
+    setTaskStatus(null);
+    setAnalysisTime(null);
+    const t0 = Date.now();
 
-  useEffect(() => {
-        fetchUsage();
-  }, [fetchUsage]);
-
-  const poll = useCallback(
-        async (id: string) => {
-                try {
-                          const res = await fetch(`${API_BASE}/status/${id}`);
-                          const data: TaskStatus = await res.json();
-                          setStatus(data);
-                          if (data.status === "done" || data.status === "error") {
-                                      setLoading(false);
-                                      if (data.status === "done") {
-                                                    // Increment usage count after successful analysis
-                                        await fetch("/api/user/usage", {
-                                                        method: "POST",
-                                                        headers: { "Content-Type": "application/json" },
-                                                        body: JSON.stringify({ action: "increment" }),
-                                        });
-                                                    fetchUsage();
-                                      }
-                          } else {
-                                      setTimeout(() => poll(id), 3000);
-                          }
-                } catch {
-                          setLoading(false);
-                          setError("Failed to poll analysis status.");
-                }
-        },
-        [fetchUsage]
-      );
-
-  const handleSubmit = async () => {
-        if (!ticker) return;
-
-        // Check if user is signed in
-        if (!isSignedIn) {
-                setError("Please sign in to run analysis.");
-                return;
-        }
-
-        // Check usage limits
-        if (userUsage && !userUsage.canAnalyze) {
-                router.push("/pricing");
-                return;
-        }
-
-        setLoading(true);
-        setError(null);
-        setStatus(null);
-        setTaskId(null);
-
-        try {
-                const res = await fetch(`${API_BASE}/analyze`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ ticker, date }),
-                });
-                const data = await res.json();
-                if (data.task_id) {
-                          setTaskId(data.task_id);
-                          poll(data.task_id);
-                } else {
-                          setError("Failed to start analysis.");
-                          setLoading(false);
-                }
-        } catch {
-                setError("Failed to connect to analysis server.");
-                setLoading(false);
-        }
+    const res = await fetch(`${API_BASE}/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticker: ticker.toUpperCase(), date }),
+    });
+    const data = await res.json();
+    pollResult(data.task_id, t0);
   };
 
-  const getDecisionColor = (decision: string) => {
-        const d = decision?.toLowerCase();
-        if (d?.includes("buy") || d?.includes("strong buy")) return "text-green-600";
-        if (d?.includes("sell") || d?.includes("strong sell")) return "text-red-600";
-        return "text-yellow-600";
+  const pollResult = (id: string, t0: number) => {
+    const interval = setInterval(async () => {
+      const res = await fetch(`${API_BASE}/result/${id}`);
+      const data: TaskStatus = await res.json();
+      setTaskStatus(data);
+      if (data.status === "done" || data.status === "error") {
+        clearInterval(interval);
+        setLoading(false);
+        setAnalysisTime(Math.round((Date.now() - t0) / 1000));
+        setActiveTab("structured_report");
+      }
+    }, 3000);
   };
 
-  const remainingFree =
-        userUsage
-        ? Math.max(0, userUsage.freeLimit - userUsage.usageCount)
-          : null;
+  const result = taskStatus?.status === "done" ? (taskStatus.result as AnalysisResult) : null;
+  const decisionCfg = result ? (DECISION_CONFIG[result.decision as keyof typeof DECISION_CONFIG] ?? DECISION_CONFIG.HOLD) : null;
 
   return (
-        <div className="min-h-screen bg-[#f8f9fa]">
-          {/* Header */}
-              <header className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white">
-                      <div className="flex items-center gap-3">
-                                <div className="w-8 h-8 bg-black rounded flex items-center justify-center text-white font-bold text-sm">
-                                            TA
-                                </div>div>
-                                <span className="font-semibold text-gray-900">TradingAgents Research</span>span>
-                                <span className="text-gray-400 hidden md:inline">|</span>span>
-                                <span className="text-gray-500 text-sm hidden md:inline">AI-Powered Equity Analysis</span>span>
-                      </div>div>
-              
-                      <div className="flex items-center gap-3">
-                        {isSignedIn ? (
-                      <>
-                        {/* Usage Badge */}
-                        {userUsage && !userUsage.isSubscribed && (
-                                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
-                                          {remainingFree === 0 ? (
-                                                              <span className="text-red-600 font-medium">Free trial used</span>span>
-                                                            ) : (
-                                                              <span>{remainingFree} free analysis left</span>span>
-                                                          )}
-                                        </span>span>
-                                    )}
-                        {userUsage?.isSubscribed && (
-                                        <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-medium">
-                                                          ✓ Subscribed
-                                        </span>span>
-                                    )}
-                        {/* Upgrade button if free trial used up */}
-                        {userUsage && !userUsage.isSubscribed && !userUsage.canAnalyze && (
-                                        <button
-                                                            onClick={() => router.push("/pricing")}
-                                                            className="text-sm bg-black text-white px-3 py-1.5 rounded-lg hover:bg-gray-800 transition-colors"
-                                                          >
-                                                          Upgrade
-                                        </button>button>
-                                    )}
-                                    <UserButton afterSignOutUrl="/" />
-                      </>>
-                    ) : (
-                      <SignInButton mode="modal">
-                                    <button className="text-sm bg-black text-white px-4 py-2 rounded-lg hover:bg-gray-800 transition-colors">
-                                                    Sign In
-                                    </button>button>
-                      </SignInButton>SignInButton>
-                                )}
-                                <span className="text-xs text-gray-400 hidden md:inline">
-                                            For research purposes only · Not financial advice
-                                </span>span>
-                      </div>div>
-              </header>header>
-        
-          {/* Main Content */}
-              <main className="max-w-5xl mx-auto px-4 py-8">
-                {/* Free Trial Banner (for signed-in non-subscribers) */}
-                {isSignedIn && userUsage && !userUsage.isSubscribed && (
-                    <div className={`mb-6 rounded-xl px-5 py-4 flex items-center justify-between ${
-                                  userUsage.canAnalyze
-                                    ? "bg-blue-50 border border-blue-200"
-                                    : "bg-amber-50 border border-amber-200"
-                    }`}>
-                                <div>
-                                  {userUsage.canAnalyze ? (
-                                      <p className="text-blue-800 text-sm font-medium">
-                                                        🎉 Free Trial: You have <strong>{remainingFree} free stock analysis</strong>strong> remaining.
-                                      </p>p>
-                                    ) : (
-                                      <p className="text-amber-800 text-sm font-medium">
-                                                        ⚡ You&apos;ve used your free analysis. Subscribe to continue using TradingAgents.
-                                      </p>p>
-                                              )}
-                                </div>div>
-                      {!userUsage.canAnalyze && (
-                                    <button
-                                                      onClick={() => router.push("/pricing")}
-                                                      className="ml-4 text-sm bg-amber-600 text-white px-4 py-2 rounded-lg hover:bg-amber-700 transition-colors whitespace-nowrap"
-                                                    >
-                                                    View Plans
-                                    </button>button>
-                                )}
-                    </div>div>
-                      )}
-              
-                {/* Sign-in prompt for unauthenticated users */}
-                {!isSignedIn && (
-                    <div className="mb-6 rounded-xl px-5 py-4 bg-blue-50 border border-blue-200 flex items-center justify-between">
-                                <p className="text-blue-800 text-sm font-medium">
-                                              👋 Sign in to get <strong>1 free stock analysis</strong>strong> — no credit card required.
-                                </p>p>
-                                <SignInButton mode="modal">
-                                              <button className="ml-4 text-sm bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap">
-                                                              Sign In Free
-                                              </button>button>
-                                </SignInButton>SignInButton>
-                    </div>div>
-                      )}
-              
-                {/* Analysis Form */}
-                      <div className="bg-white rounded-2xl border border-gray-200 p-6 mb-6 shadow-sm">
-                                <div className="flex flex-col md:flex-row gap-4 items-end">
-                                            <div className="flex-1">
-                                                          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                                                                          Ticker Symbol
-                                                          </label>label>
-                                                          <input
-                                                                            type="text"
-                                                                            value={ticker}
-                                                                            onChange={(e) => setTicker(e.target.value.toUpperCase())}
-                                                                            placeholder="E.G. AAPL, NVDA, TSLA"
-                                                                            className="w-full px-4 py-3 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent text-lg"
-                                                                            onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-                                                                          />
-                                            </div>div>
-                                            <div>
-                                                          <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
-                                                                          Analysis Date
-                                                          </label>label>
-                                                          <input
-                                                                            type="date"
-                                                                            value={date}
-                                                                            onChange={(e) => setDate(e.target.value)}
-                                                                            className="px-4 py-3 border border-gray-200 rounded-xl text-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-900 focus:border-transparent"
-                                                                          />
-                                            </div>div>
-                                            <button
-                                                            onClick={handleSubmit}
-                                                            disabled={loading || !ticker || (!!userUsage && !userUsage.canAnalyze)}
-                                                            className="px-8 py-3 bg-gray-800 text-white rounded-xl font-semibold hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                                                          >
-                                              {loading ? "Analyzing..." : "Run Analysis"}
-                                            </button>button>
-                                </div>div>
-                      
-                        {error && (
-                      <p className="mt-3 text-red-600 text-sm">{error}</p>p>
-                                )}
-                      </div>div>
-              
-                {/* Status / Loading */}
-                {loading && (
-                    <div className="bg-white rounded-2xl border border-gray-200 p-8 text-center shadow-sm mb-6">
-                                <div className="inline-block w-8 h-8 border-4 border-gray-900 border-t-transparent rounded-full animate-spin mb-4"></div>div>
-                                <p className="text-gray-600 font-medium">
-                                              Analyzing {ticker}... This may take 1-2 minutes.
-                                </p>p>
-                                <p className="text-gray-400 text-sm mt-1">
-                                              Our AI agents are gathering market data, news, and fundamentals.
-                                </p>p>
-                    </div>div>
-                      )}
-              
-                {/* Results */}
-                {status?.status === "done" && status.result && (
-                    <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
-                      {/* Decision Banner */}
-                                <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
-                                              <div>
-                                                              <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">AI Decision</p>p>
-                                                              <p className={`text-2xl font-bold ${getDecisionColor(status.result.decision)}`}>
-                                                                {status.result.decision}
-                                                              </p>p>
-                                              </div>div>
-                                              <div className="text-right">
-                                                              <p className="text-xs text-gray-500">Ticker</p>p>
-                                                              <p className="text-xl font-bold text-gray-900">{ticker}</p>p>
-                                              </div>div>
-                                </div>div>
-                    
-                      {/* Tabs */}
-                                <div className="flex border-b border-gray-100 overflow-x-auto">
-                                  {TABS.map((tab) => (
-                                      <button
-                                                          key={tab.key}
-                                                          onClick={() => setActiveTab(tab.key)}
-                                                          className={`px-5 py-3 text-sm font-medium whitespace-nowrap transition-colors ${
-                                                                                activeTab === tab.key
-                                                                                  ? "border-b-2 border-gray-900 text-gray-900"
-                                                                                  : "text-gray-500 hover:text-gray-700"
-                                                          }`}
-                                                        >
-                                        {tab.label}
-                                      </button>button>
-                                    ))}
-                                </div>div>
-                    
-                      {/* Tab Content */}
-                                <div className="p-6">
-                                              <div className="prose prose-sm max-w-none text-gray-700">
-                                                              <ReactMarkdown>
-                                                                {status.result[activeTab as keyof AnalysisResult] || "No data available."}
-                                                              </ReactMarkdown>ReactMarkdown>
-                                              </div>div>
-                                </div>div>
-                    </div>div>
-                      )}
-              
-                {status?.status === "error" && (
-                    <div className="bg-red-50 rounded-2xl border border-red-200 p-6 text-red-700">
-                                <p className="font-semibold">Analysis failed</p>p>
-                                <p className="text-sm mt-1">{status.error || "Unknown error"}</p>p>
-                    </div>div>
-                      )}
-              </main>main>
-        </div>div>
-      );
-}</></div>
+    <div className="min-h-screen bg-[#f8f9fa] font-sans">
+      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-7 h-7 bg-black rounded flex items-center justify-center">
+            <span className="text-white text-xs font-bold">TA</span>
+          </div>
+          <span className="font-semibold text-gray-900 text-sm">TradingAgents Research</span>
+          <span className="text-gray-300 text-xs">|</span>
+          <span className="text-gray-400 text-xs">AI-Powered Equity Analysis</span>
+        </div>
+        <span className="text-xs text-gray-400">For research purposes only · Not financial advice</span>
+      </header>
+
+      <div className="max-w-6xl mx-auto px-6 py-8">
+        <div className="bg-white border border-gray-200 rounded-xl p-5 mb-6 shadow-sm">
+          <div className="flex gap-3 items-end">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">TICKER SYMBOL</label>
+              <input
+                className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-black"
+                placeholder="e.g. AAPL, NVDA, TSLA"
+                value={ticker}
+                onChange={(e) => setTicker(e.target.value.toUpperCase())}
+                onKeyDown={(e) => e.key === "Enter" && startAnalysis()}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1.5">ANALYSIS DATE</label>
+              <input
+                className="border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-black"
+                type="date" value={date} onChange={(e) => setDate(e.target.value)}
+              />
+            </div>
+            <button
+              onClick={startAnalysis} disabled={loading || !ticker}
+              className="bg-black text-white rounded-lg px-6 py-2.5 text-sm font-medium hover:bg-gray-800 disabled:opacity-40 transition whitespace-nowrap"
+            >
+              {loading ? "Analyzing..." : "Run Analysis"}
+            </button>
+          </div>
+        </div>
+
+        {loading && (
+          <div className="bg-white border border-gray-200 rounded-xl p-8 text-center shadow-sm">
+            <div className="inline-flex items-center gap-3 text-gray-600">
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+              </svg>
+              <span className="text-sm">Multi-agent analysis in progress — typically 3–5 minutes</span>
+            </div>
+          </div>
+        )}
+
+        {taskStatus?.status === "error" && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-5 text-sm text-red-700">
+            Analysis failed: {String(taskStatus.result)}
+          </div>
+        )}
+
+        {result && decisionCfg && (
+          <div className="space-y-5">
+            <div className="grid grid-cols-4 gap-4">
+              <div className={`col-span-1 ${decisionCfg.bg} border ${decisionCfg.border} rounded-xl p-5 flex flex-col items-center justify-center`}>
+                <span className="text-xs font-medium text-gray-500 mb-1">RECOMMENDATION</span>
+                <span className={`text-4xl font-bold ${decisionCfg.color}`}>{result.decision}</span>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col justify-center">
+                <span className="text-xs font-medium text-gray-400 mb-1">TICKER</span>
+                <span className="text-2xl font-bold font-mono text-gray-900">{ticker}</span>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col justify-center">
+                <span className="text-xs font-medium text-gray-400 mb-1">ANALYSIS DATE</span>
+                <span className="text-sm font-semibold text-gray-900">{date}</span>
+              </div>
+              <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col justify-center">
+                <span className="text-xs font-medium text-gray-400 mb-1">ANALYSIS TIME</span>
+                <span className="text-sm font-semibold text-gray-900">{analysisTime}s</span>
+              </div>
+            </div>
+
+            <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+              <div className="flex border-b border-gray-200 items-center">
+                {SECTIONS.map((s) => (
+                  <button key={s.key} onClick={() => setActiveTab(s.key)}
+                    className={`flex-1 px-3 py-3 text-xs font-medium transition flex items-center justify-center gap-1.5 ${
+                      activeTab === s.key ? "border-b-2 border-black text-gray-900 bg-gray-50" : "text-gray-500 hover:text-gray
