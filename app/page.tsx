@@ -123,7 +123,7 @@ export default function Home() {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
               </svg>
-              <span className="text-sm">Multi-agent analysis in progress — typically 3–5 minutes</span>
+              <span className="text-sm">Multi-agent analysis in progress — typically 3-5 minutes</span>
             </div>
           </div>
         )}
@@ -160,4 +160,22 @@ export default function Home() {
                 {SECTIONS.map((s) => (
                   <button key={s.key} onClick={() => setActiveTab(s.key)}
                     className={`flex-1 px-3 py-3 text-xs font-medium transition flex items-center justify-center gap-1.5 ${
-                      activeTab === s.key ? "border-b-2 border-black text-gray-900 bg-gray-50" : "text-gray-500 hover:text-gray
+                      activeTab === s.key ? "border-b-2 border-black text-gray-900 bg-gray-50" : "text-gray-500 hover:text-gray-700"
+                    }`}
+                  >
+                    <span>{s.icon}</span>{s.label}
+                  </button>
+                ))}
+              </div>
+              <div className="p-6 prose prose-sm max-w-none text-gray-700 leading-relaxed">
+                <ReactMarkdown>
+                  {String(result[activeTab as keyof AnalysisResult] || "No data available.")}
+                </ReactMarkdown>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
