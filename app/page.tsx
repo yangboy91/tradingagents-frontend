@@ -45,7 +45,6 @@ export default function Home() {
     setLoading(true);
     setTaskStatus(null);
     setAnalysisTime(null);
-    const t0 = Date.now();
 
     const res = await fetch(`${API_BASE}/analyze`, {
       method: "POST",
@@ -53,18 +52,20 @@ export default function Home() {
       body: JSON.stringify({ ticker: ticker.toUpperCase(), date }),
     });
     const data = await res.json();
-    pollResult(data.task_id, t0);
+    pollResult(data.task_id);
   };
 
-  const pollResult = (id: string, t0: number) => {
+  const pollResult = (id: string) => {
+    let elapsedSeconds = 0;
     const interval = setInterval(async () => {
+      elapsedSeconds += 3;
       const res = await fetch(`${API_BASE}/result/${id}`);
       const data: TaskStatus = await res.json();
       setTaskStatus(data);
       if (data.status === "done" || data.status === "error") {
         clearInterval(interval);
         setLoading(false);
-        setAnalysisTime(Math.round((Date.now() - t0) / 1000));
+        setAnalysisTime(elapsedSeconds);
         setActiveTab("structured_report");
       }
     }, 3000);
